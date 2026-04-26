@@ -1,0 +1,79 @@
+# Current user
+$currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+$currentUserSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+
+# All write-type rights to check
+$writeRights = @(
+    "FullControl",
+    "Modify",
+    "WriteData",
+    "AppendData",
+    "WriteAttributes",
+    "WriteExtendedAttributes",
+    "Delete",
+    "TakeOwnership",
+    "ChangePermissions"
+)
+
+# Get all services
+Get-WmiObject Win32_Service | ForEach-Object {
+    $serviceName = $_.Name
+    $serviceDisplay = $_.DisplayName
+    $serviceBinary = $_.PathName
+
+    if (-not [string]::IsNullOrWhiteSpace($serviceBinary)) {
+        # Remove quotes if present
+        $serviceBinary = $serviceBinary.Trim('"')
+
+        # Handle paths with arguments
+        if ($serviceBinary -match '^(.*?\.exe)') {
+            $serviceBinary = $matches[1]
+        }
+
+        # Expand environment variables
+        $serviceBinary = [Environment]::ExpandEnvironmentVariables($serviceBinary)
+
+        Write-Host "Checking $serviceBinary of $serviceName"
+
+        # Check if file exists
+        if (Test-Path $serviceBinary) {
+            try {
+                $acl = Get-Acl $serviceBinary
+            } catch {
+                Write-Host "Cannot get ACL for $serviceBinary"
+                return
+            }
+
+            # Check if the current user has write access
+            $hasWriteAccess = $false
+            $privilegesFound = @()
+            foreach ($ace in $acl.Access) {
+                if ($ace.IdentityReference.Value -eq $currentUser -or $ace.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value -eq $currentUserSid) {
+                    foreach ($right in $writeRights) {
+                        if ($ace.FileSystemRights.ToString().Contains($right) -and $ace.AccessControlType -eq "Allow") {
+                            $hasWriteAccess = $true
+                            $privilegesFound += $right
+                        }
+                    }
+                }
+            }
+
+            if ($hasWriteAccess) {
+                $privs = ($privilegesFound | Sort-Object -Unique) -join ", "
+                Write-Host "YOU HAVE $privs on $serviceName for $serviceBinary" -ForegroundColor Green
+
+                [PSCustomObject]@{
+                    ServiceName = $serviceName
+                    DisplayName = $serviceDisplay
+                    StartMode = $_.StartMode
+                    ServiceAccount = $_.StartName
+                    BinaryPath = $serviceBinary
+                    CurrentUserWriteAccess = $true
+                    PrivilegesFound = $privs
+                }
+            }
+        } else {
+            Write-Host "File not found: $serviceBinary"
+        }
+    }
+} | Format-Table -AutoSize
