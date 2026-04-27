@@ -1,0 +1,23 @@
+$wptPath = "Z:\Windows Kits\10\Windows Performance Toolkit"
+
+Get-CimInstance Win32_Service | ForEach-Object {
+    $exePath = $_.PathName
+
+    # Remove quotes and command line arguments
+    if ($exePath -match '^(.*?\.exe)') {
+        $exePath = $matches[1]
+    }
+
+    # Expand environment variables
+    $exePath = [Environment]::ExpandEnvironmentVariables($exePath)
+
+    # Check if the service binary is in your WPT folder
+    if ($exePath -like "$wptPath*") {
+        [PSCustomObject]@{
+            ServiceName = $_.Name
+            DisplayName = $_.DisplayName
+            StartName = $_.StartName
+            BinaryPath = $exePath
+        }
+    }
+} | Format-Table -AutoSize
